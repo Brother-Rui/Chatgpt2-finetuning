@@ -10,7 +10,7 @@ import torch._dynamo.config
 torch._dynamo.config.suppress_errors = True
 
 
-def train(pretrain, batch_size, exp_name, max_examples, reranked):
+def train(pretrain, batch_size, exp_name, max_examples, reranked,optimizer_name):
     if max_examples:
         max_examples = int(max_examples)
     if int(reranked) == 1:
@@ -57,9 +57,10 @@ def train(pretrain, batch_size, exp_name, max_examples, reranked):
 @click.option('--exp-name', '-n', default="default")
 @click.option('--max-examples', '-m', default=None)
 @click.option('--reranked', '-r', default=0)
-def main(pretrain, batch_size, exp_name, max_examples, reranked):
+@click.option('--optimizer-name','-o',default="default")
+def main(pretrain, batch_size, exp_name, max_examples, reranked,optimizer_name):
     torch.manual_seed(1234)
-    train(pretrain, batch_size, exp_name, max_examples, reranked)
+    train(pretrain, batch_size, exp_name, max_examples, reranked,optimizer_name)
 
 if __name__ == "__main__":
     main()

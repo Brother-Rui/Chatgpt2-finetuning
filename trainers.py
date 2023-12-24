@@ -3,7 +3,7 @@ import os
 import json
 import random
 from datetime import datetime
-from torch import nn
+from torch import nn, optim
 from torch.utils.data import DataLoader
 from configs import TrainingConfig
 # New import by ME
@@ -11,6 +11,11 @@ import numpy as np
 import pandas as pd
 from utils import logprobs_from_logits
 from early_stopping import EarlyStopping
+import wandb
+
+# You can plug your wandb api key in
+os.environ["WANDB_API_KEY"] = "88954298f9622e2eeb5583e610ee8dc2764190fb"
+
 
 class Trainer:
 
@@ -55,6 +60,7 @@ class Trainer:
         # Save the DataFrame to a text file (change 'output.txt' to your desired file name)
         df.to_csv(f'./runs/{self.run_name}/loss.txt', sep='\t', index=False, header=False)
 
+
 class SFTTrainer(Trainer):
 
     def __init__(self, cfg: TrainingConfig, device, model: nn.Module,
@@ -91,22 +97,36 @@ class SFTTrainer(Trainer):
         }
         self.save_hyperparams(hp)
 
-    def fit(self):
+    def fit(self, optimizer_name='Adam'):
         # TODO: complete the SFT training.
         stopper = EarlyStopping(self)
-        eval_samples = 200    # 200 samples for each evaluation
+        eval_samples = 200  # 200 samples for each evaluation
         eval_interval = 500  # evaluate model every 500 iteration
         Loss_Train = []
         Loss_Val = []
-
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
+        if optimizer_name == "SGD":
+            self.optimizer = optim.SGD(self.model.parameters(), lr=self.cfg.lr)
+        elif optimizer_name == "momentum":
+            self.optimizer = optim.SGD(self.model.parameters(), lr=self.cfg.lr, momentum=0.9)
+        elif optimizer_name == "nesterov":
+            self.optimizer = optim.SGD(self.model.parameters(), lr=self.cfg.lr, momentum=0.9, nesterov=True)
+        elif optimizer_name == "Adam":
+            self.optimizer = optim.Adam(self.model.parameters(), lr=self.cfg.lr)
+        elif optimizer_name == "AdamW":
+            self.optimizer = optim.AdamW(self.model.parameters(), lr=self.cfg.lr)
+        else:
+            raise ValueError("Invalid optimizer name")
+        # self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
         self.model = self.model.to(self.device)
-        
+
+        wandb.init(project="Convergence")
         for iter in range(self.cfg.max_steps):
-            
+            allocated_memory_begin = torch.cuda.memory_allocated(self.device) / (1024 ** 3)
+
             if iter % eval_interval == 0:  # Evaluate train error and test error
                 Er_in, Er_out = self.estimate_loss(eval_samples)
                 print(f"step {iter}: train loss {Er_in:.4f}, val loss {Er_out:.4f}")
+                wandb.log({'Avg-Val-Loss': Er_out})
                 Loss_Train.append(Er_in.cpu().item())
                 Loss_Val.append(Er_out.cpu().item())
                 stopper(Er_out)
@@ -120,7 +140,7 @@ class SFTTrainer(Trainer):
                     self.save_loss(Loss_Train, Loss_Val)
                     print("Normal Stopping...Model saved.")
                     return Loss_Train, Loss_Val
-                    
+
             x, y = next(self.train_dataloader)
             x = x.to(self.device)
             y = y.to(self.device)
@@ -130,8 +150,15 @@ class SFTTrainer(Trainer):
             if iter % 10 == 0: print(f"step {iter}: train loss {loss.item():.4f}")
             loss.backward()
             self.optimizer.step()
-            self.optimizer.zero_grad(set_to_none=True)
 
+            allocated_memory_end = torch.cuda.memory_allocated(self.device) / (1024 ** 3)
+            gpu_memory_consuming = allocated_memory_end - allocated_memory_begin
+            print(f'GPU memory consuming per step {gpu_memory_consuming:.4f}GB', end=', ')
+            print(f'GPU allocated total memory {torch.cuda.memory_allocated(self.device) / (1024 ** 3):.4f}GB')
+            wandb.log({'GPU memory consuming per step': gpu_memory_consuming})
+
+            self.optimizer.zero_grad(set_to_none=True)
+        wandb.finshed()
         # self.save_states(self.cfg.max_steps, is_last=True)
         # self.save_loss(Loss_Train, Loss_Val)
         return Loss_Train, Loss_Val
@@ -163,9 +190,3 @@ class SFTTrainer(Trainer):
             self.model.train()
 
         return Er_in.mean(), Er_out.mean()
-
-
-
-
-
-
